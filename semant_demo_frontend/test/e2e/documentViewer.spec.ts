@@ -207,3 +207,53 @@ test('the AI assist and tags panels keep their state across panel switches', asy
   await expect(page.locator('.ai-tag-list').getByRole('checkbox', { name: fixture.tag('person').name })).toHaveAttribute('aria-checked', 'true')
   await expect(page.locator('.ai-tag-list').getByRole('checkbox', { name: fixture.tag('place').name })).toHaveAttribute('aria-checked', 'false')
 })
+
+/** Whether something else is on top at the centre of the element. */
+const covered = (locator: Locator) => locator.evaluate((el) => {
+  const box = el.getBoundingClientRect()
+  return !el.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))
+})
+
+// #415: a dialog opened from the popover covers it, so nothing in the popover can be
+// clicked (no second create-tag dialog) until the dialog closes.
+test('the create-tag dialog covers the popover until it is closed', async ({ page }) => {
+  await ensureLoggedIn(page, 'owner')
+  await openDocument(page, 'chronicles', 'chronicle')
+  await expect(page.locator('.gutter-item')).toHaveCount(2)
+
+  const start = fixture.chunk('chronicle_1').text.indexOf('hostinci')
+  await selectText(page, 'chronicle_1', start, 'chronicle_1', start + 'hostinci'.length)
+  const createTag = popover(page).getByText('Create new tag')
+  await createTag.click()
+  const dialog = page.locator('.q-dialog')
+  await expect(dialog.getByLabel('Tag Name')).toBeVisible()
+
+  await expect(popover(page)).toBeVisible()
+  await expect.poll(() => covered(createTag)).toBe(true)
+  await expect.poll(() => covered(popover(page).locator('.popover-close'))).toBe(true)
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect.poll(() => covered(createTag)).toBe(false)
+})
+
+test('the bulk bar stays below the popover and the dialogs it opens', async ({ page }) => {
+  await ensureLoggedIn(page, 'owner')
+  await openDocument(page, 'chronicles', 'chronicle')
+  await expect(page.locator('.gutter-item')).toHaveCount(2)
+
+  await page.locator('.chunk-checkbox-item').first().click()
+  const bar = page.locator('.bulk-action-bar')
+  await expect(bar).toContainText('1 selected')
+
+  const start = fixture.chunk('chronicle_1').text.indexOf('hostinci')
+  await selectText(page, 'chronicle_1', start, 'chronicle_1', start + 'hostinci'.length)
+  await expect(popover(page)).toBeVisible()
+  // Both are fixed children of <body>, so their z-index orders them where they overlap.
+  const zIndex = (locator: Locator) => locator.evaluate((el) => Number(getComputedStyle(el).zIndex))
+  expect(await zIndex(bar)).toBeLessThan(await zIndex(popover(page)))
+
+  await popover(page).getByText('Create new tag').click()
+  await expect(page.locator('.q-dialog').getByLabel('Tag Name')).toBeVisible()
+  await expect.poll(() => covered(bar)).toBe(true)
+})
